@@ -1,4 +1,4 @@
-require('dotenv').config(); // it should be at the top
+require('dotenv').config(); // it should be at the top, ye .env file ke liye hai 
 const express = require('express');
 const path = require('path');
 const hbs = require('hbs'); // partial folder ki file ko run karvane ke liye hbs ko require karva rhe hai
