@@ -3,10 +3,13 @@ const express = require('express');
 const path = require('path');
 const hbs = require('hbs'); // partial folder ki file ko run karvane ke liye hbs ko require karva rhe hai
 const bcrypt = require("bcryptjs/dist/bcrypt");
+const cookieParser = require("cookie-parser");
+
 
 
 require("./db/connection");
 const Register = require("./models/registers");
+const auth = require("./middleware/auth");
 const async = require('hbs/lib/async');
 
 const app = express();
@@ -16,6 +19,8 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({extended:false})); // Form ke andar jo bhi likha hai usse get karne ke liye ham iss line ka use karenge 
 // ye line na likhne par hame console me undefined mil rha tha 
+app.use(cookieParser());  // hame hamare node,express,mongoDB application ko ye btana hai ki mujhe cookie-parser ko as a middleware use karna hai 
+
 
 const static_path = path.join(__dirname,"../public");
 // console.log(static_path);  // E:\Registration from\public
@@ -31,7 +36,45 @@ hbs.registerPartials(partials_path); // partial folder ki file ko run karvane ke
 
 app.get("/", (req,res) => {
     // res.send("hansraj singh tomar with s yadav"); // index.html namilne par ye line show karegi screen par //! but ham partial file ko show karenge 
-    res.render("register"); // yha ham index.hbs file ko show karva rhe hai 
+    res.render("index"); // yha ham index.hbs file ko show karva rhe hai 
+})
+
+app.get("/secret", auth, (req,res) => {
+    // console.log(`This is the cookie - ${req.cookies.hansraj}`); // This is the cookie - eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2MjgwYTI4MzhlZmU2MjJmNGY5ODUwZDQiLCJpYXQiOjE2NTI5NzI1NTYsImV4cCI6MTY1Mjk3MjU1OH0.kwLHZ4RXf0JjsRb0DDb9q05bGiNoNo3lYs0n9KDSspE 
+    // This is the cookie - undefined, undefined isliye aa rha hai kyonki ham cookie genrate karvane ke sath hi cookie ko vaerify/request bhi karva rhe hai jo ki galat hai    
+    // to ab hame request tabhi karna hai jab user login ya register kar leta hai uske baad jab ham uss token ko generate karva kar store karva rhe hai
+    // next time jab user perticular pages ko open karvana chahega jo ki sirf authenticate user hai jinke pass apna kud ka token hai unke liye hi hoga vo tab hame usko verify karna hai ya uss cookie ko get karna hai 
+    res.render("secret");
+})
+
+//! mere login karne par mujhe navbar me logout ka option dikhna chahiye - uske liye ham js ka code ya css ke through code likhenge jo alag chij hai 
+app.get("/logout", auth, async (req,res) => {
+    try {
+
+        console.log(req.user);
+        
+        // ab mujhe data base se bhi cookie ko hatana hai to me filter method ka use karunga
+        // for single logout
+        // req.user.tokens = req.user.tokens.filter( (currElement) => {
+        //     return currElement.token !== req.token;
+        // }) 
+
+        
+        // logout from all devices
+        req.user.tokens = [];
+
+
+        res.clearCookie("hansraj"); // isse database me token delete nhi hoga uske liye ham filter method ka use kar ke code likhenge 
+        console.log("Logout successfully");
+        
+        await req.user.save(); 
+        res.render("login");
+    
+    } catch (error) {
+    
+        res.status(500).send(error);
+    
+    }
 })
 
 app.get('/register', (req,res) => {
@@ -52,8 +95,9 @@ app.post('/register', async (req,res) => {
         const password = req.body.password;
         const cpassword = req.body.confirmpassword;
         if(password === cpassword){
-
+            
             const registerEmployee = new Register({
+                
                 firstname: req.body.firstname,
                 lastname: req.body.lastname,
                 email: req.body.email,
@@ -62,14 +106,41 @@ app.post('/register', async (req,res) => {
                 age: req.body.age, 
                 password: req.body.password, // password : password ye bhi likh sakte hai koyki hamne pehle isse define kar diya hai that's why
                 confirmpassword: req.body.confirmpassword, // confirmpassword: confirmpassword
-            })
+                
+            });
+            
+            /* // ! Second way to create hash password
+            const  hpassword = await bcrypt.hash(password, 10);
+            registerEmployee.password = hpassword;
+            const  hcpassword = await bcrypt.hash(cpassword, 10);
+            registerEmployee.confirmpassword = hcpassword;
+            */
 
             console.log("The success part" + registerEmployee);
            
             const token = await registerEmployee.generateAuthToken();
             console.log("The token part" + " " +token);
 
-            const registered = await registerEmployee.save(); 
+            /*
+                The res.cookie() function is used to set the cookies name to value.
+                The value parameter may be a string or object converted to JSON.
+                styntax :- res.cookie(name, value =, [options]) 
+
+                HttpOnly is a flag that can be included in a set-Cookie response header.
+                The presence of this flag will tell browser to not allow client side script
+                access to the cookie (if the browser supports it)
+            */
+
+            res.cookie('hansraj', token, {
+              expires:new Date(Date.now() + 60000),
+              httpOnly:true,   // ab hamara jo client side scripting language hai vo hamare iss cookies ka jo value hai isko kuch bhi nhi kar sakta hai  
+            //   secure:true, // it means ye jo cookies hai vo sirf https, secure connection par hi work karega 
+            });
+            console.log(cookie);
+
+            const registered = await registerEmployee.save();
+            // console.log("the page part" + " " + registered);
+
             res.status(201).render("index");
  
         }else{
@@ -81,23 +152,34 @@ app.post('/register', async (req,res) => {
     }
 });
 
-// Login Check
 
+
+
+// Login Check
 app.post("/login", async (req,res) => {
+
     try {
 
         const email = req.body.email;
         const password = req.body.password;
         // console.log(`${email} and password is ${password}`);
 
-        const useremail = await Register.findOne({email:email});
-        // res.send(useremail.password);
-        // console.log(useremail);
+        const user = await Register.findOne({email:email});
+        // res.send(user.password);
+        // console.log(user);
+        // console.log(user.password); // isme hamara hash password hai 
 
-        const isMatch = await bcrypt.compare(password, useremail.password);
+        const isMatch = await bcrypt.compare(password, user.password);
 
-        const token = await useremail.generateAuthToken();
+        const token = await user.generateAuthToken();
         console.log("The token part" + " " +token);
+
+        res.cookie('hansraj', token, {
+            expires:new Date(Date.now() + 15000),
+            httpOnly:true,   // ab hamara jo client side scripting language hai vo hamare iss cookies ka jo value hai isko kuch bhi nhi kar sakta hai  
+            // secure:true,
+        });
+
 
         // if(useremail.password === password){
         //! after using hashing  
@@ -172,3 +254,26 @@ empty values become empty strings; BASIC = becomes {BASIC:''}
 inner quotes are maintained 
 existing environment variables are not modified; they are skipped.
 */
+
+
+//! storing JWT Token in cookies
+ // console.log(`This is the cookie - ${req.cookies.hansraj}`); // This is the cookie - eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2MjgwYTI4MzhlZmU2MjJmNGY5ODUwZDQiLCJpYXQiOjE2NTI5NzI1NTYsImV4cCI6MTY1Mjk3MjU1OH0.kwLHZ4RXf0JjsRb0DDb9q05bGiNoNo3lYs0n9KDSspE 
+    // This is the cookie - undefined, undefined isliye aa rha hai kyonki ham cookie genrate karvane ke sath hi cookie ko vaerify/request bhi karva rhe hai jo ki galat hai    
+    // to ab hame request tabhi karna hai jab user login ya register kar leta hai uske baad jab ham uss token ko generate karva kar store karva rhe hai
+    // next time jab user perticular pages ko open karvana chahega jo ki sirf authenticate user hai jinke pass apna kud ka token hai unke liye hi hoga vo tab hame usko verify karna hai ya uss cookie ko get karna hai 
+
+    /*
+            The res.cookie() function is used to set the cookies name to value.
+            The value parameter may be a string or object converted to JSON.
+            styntax :- res.cookie(name, value =, [options]) 
+
+            HttpOnly is a flag that can be included in a set-Cookie response header.
+            The presence of this flag will tell browser to not allow client side script
+            access to the cookie (if the browser supports it)
+    */
+            // res.cookie('hansraj', token, {
+            //     expires:new Date(Date.now() + 60000),
+            //     httpOnly:true,   // ab hamara jo client side scripting language hai vo hamare iss cookies ka jo value hai isko kuch bhi nhi kar sakta hai  
+            //      secure:true, // it means ye jo cookies hai vo sirf https, secure connection par hi work karega 
+            //   });
+            //   console.log(cookie);
